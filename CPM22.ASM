@@ -39,7 +39,9 @@ DEL	EQU	7FH		;rubout
 ;
 ;   Set origin for CP/M
 ;
-	ORG	(MEM-7)*1024
+ORIGIN	EQU (MEM-7)*1024
+
+	ORG	ORIGIN
 ;
 CBASE:	JP	COMMAND		;execute command processor (ccp).
 	JP	CLEARBUF	;entry to empty input buffer before starting ccp.
@@ -364,7 +366,7 @@ VERIFY:	LD	DE,PATTRN1	;these are the serial number bytes.
 	LD	B,6		;6 bytes each.
 VERIFY1:LD	A,(DE)
 	CP	(HL)
-	JP	NZ,HALT		;jump to halt routine.
+	JP	NZ,HALTR		;jump to halt routine.
 	INC	DE
 	INC	HL
 	DEC	B
@@ -671,7 +673,7 @@ CMDADR:	DEFW	DIRECT,ERASE,TYPE,SAVE
 ;
 ;   Halt the system. Reason for this is unknown at present.
 ;
-HALT:	LD	HL,76F3H	;'DI HLT' instructions.
+HALTR:	LD	HL,76F3H	;'DI HLT' instructions.
 	LD	(CBASE),HL
 	LD	HL,CBASE
 	JP	(HL)
@@ -2040,7 +2042,7 @@ SHIFTR1:DEC	C
 CHECKSUM: LD	C,128		;length of buffer.
 	LD	HL,(DIRBUF)	;get its location.
 	XOR	A		;clear summation byte.
-CHKSUM1:ADD	A,M		;and compute sum ignoring carries.
+CHKSUM1:	ADD	A,(HL)		;and compute sum ignoring carries.
 	INC	HL
 	DEC	C
 	JP	NZ,CHKSUM1
@@ -2165,13 +2167,13 @@ MOREFLS:LD	HL,(FILEPOS)	;we are here.
 	SUB	(HL)
 	INC	HL
 	LD	A,D
-	SBC	A,M		;set carry if no more names.
+	SBC	A,(HL)		;set carry if no more names.
 	RET	
 ;
 ;   Call this routine to prevent (SCRATCH1) from being greater
 ; than (FILEPOS).
 ;
-CHKNMBR:CALL	MOREFLS		;SCRATCH1 too big?
+CHKNMBR:	CALL	MOREFLS		;SCRATCH1 too big?
 	RET	C
 	INC	DE		;yes, reset it to (FILEPOS).
 	LD	(HL),D
@@ -2418,7 +2420,7 @@ SETFL4:	POP	HL		;point to next block number in fcb.
 ; current user number, then (STATUS) is set to minus 1. Otherwise
 ; it is not set at all.
 ;
-BITMAP:	LD	HL,(DSKSIZE)	;compute size of allocation table.
+BITMAPR:	LD	HL,(DSKSIZE)	;compute size of allocation table.
 	LD	C,3
 	CALL	SHIFTR		;(HL)=(HL)/8.
 	INC	HL		;at lease 1 byte.
@@ -3337,10 +3339,10 @@ RANSIZ1:CALL	CKFILPOS	;is there an extent to process?
 	SUB	(HL)		;in the fcb represent a larger size than
 	INC	HL		;this extent does.
 	LD	A,B
-	SBC	A,M
+	SBC	A,(HL)
 	INC	HL
 	LD	A,E
-	SBC	A,M
+	SBC	A,(HL)
 	JP	C,RANSIZ2
 	LD	(HL),E		;we found a larger (in size) extent.
 	DEC	HL		;stuff these values into fcb.
@@ -3388,7 +3390,7 @@ LOGINDRV: LD	HL,(LOGIN)	;get the login vector.
 	LD	B,H
 	CALL	SETBIT
 	LD	(LOGIN),HL	;and save.
-	JP	BITMAP		;now update the bitmap.
+	JP	BITMAPR		;now update the bitmap.
 ;
 ;   Function to set the active disk number.
 ;
@@ -3735,4 +3737,10 @@ SECTRN:	JP	0
 ;*
 ;******************   E N D   O F   C P / M   *****************
 ;*
+
+endprog	equ $
+
+	output_bin "mintz80_CPM_22.bin",ORIGIN,endprog-ORIGIN    ; 
+	output_intel "mintz80_CPM_22.hex",ORIGIN,endprog-ORIGIN    ; 
+	output_list "mintz80_CPM_22.lst"
 
