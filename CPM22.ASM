@@ -3738,9 +3738,9 @@ SECTRN:	JP	0
 ;******************   E N D   O F   C P / M   *****************
 ;*
 
-endprog	equ $
+;endprog	equ $
 
-	output_bin "mintz80_CPM_22.bin",ORIGIN,endprog-ORIGIN    ; 
-	output_intel "mintz80_CPM_22.hex",ORIGIN,endprog-ORIGIN    ; 
-	output_list "mintz80_CPM_22.lst"
+;	output_bin "mintz80_CPM_22.bin",ORIGIN,endprog-ORIGIN    ; 
+;	output_intel "mintz80_CPM_22.hex",ORIGIN,endprog-ORIGIN    ; 
+;	output_list "mintz80_CPM_22.lst"
 
