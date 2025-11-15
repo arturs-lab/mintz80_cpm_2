@@ -24,18 +24,26 @@
 
 
 ;##########################################################################
-; set .debug to:
+; set debug to:
 ;    0 = no debug output
 ;    1 = print messages from new code under development
 ;    2 = print all the above plus the primairy 'normal' debug messages
 ;    3 = print all the above plus verbose 'noisy' debug messages
 ;##########################################################################
 ;.debug:		equ	1
-.debug:		equ	0
+debug:		equ	0
 
+; Define the memory size to be used for the CP/M configuration
+MEM:    equ 60
 
-include	'io.asm'
-include	'memory.asm'
+; The CPM origin will be at: (MEM-7)*1024
+; This screwy convention is due to the way that that the CP/M origin is defined.
+CPM_BASE:	equ	(MEM-7)*1024
+
+LOAD_BASE:	equ	0xc000		; where the boot loader reads the image from the SD card
+
+;include	"io.asm"
+;include	"memory.asm"
 
 	org	LOAD_BASE		; Where the boot loader places this code.
 
@@ -48,13 +56,13 @@ include	'memory.asm'
 	; HL = the low 16 bits of the starting SD block number
 
 	or	a
-	jp	z,.bios_boot
+	jp	z,bios_boot
 
 	; A != 0, patch the BIOS to use the given offset when accessing the SD card
 	ld	(disk_offset_low),hl
 	ld	(disk_offset_hi),de
 
-	jp	.bios_boot
+	jp	bios_boot
 
 	; The 'org' in cpm22.asm does not generate any fill so we must
 	; padd memory out to the base location of CP/M
@@ -70,7 +78,7 @@ include	'memory.asm'
 ;
 ;##########################################################################
 
-include '../cpm-2.2/src/cpm22.asm'
+;include "cpm22.asm"
 
 
 ;##########################################################################
@@ -82,17 +90,17 @@ include '../cpm-2.2/src/cpm22.asm'
 ;
 ;##########################################################################
 if $ != CPM_BASE+0x1600
-	ERROR	THE BIOS VECTOR TABLE IS IN THE WRONG PLACE
+	zeusprint "ERROR	THE BIOS VECTOR TABLE IS IN THE WRONG PLACE"
 endif
 
-BOOT:   JP      .bios_boot
-WBOOT:  JP      .bios_wboot
-CONST:  JP      .bios_const
+BOOT:   JP      bios_boot
+WBOOT:  JP      bios_wboot
+CONST:  JP      bios_const
 CONIN:  JP      con_rx_char
 CONOUT: JP      con_tx_char
 LIST:   JP      list_out
-PUNCH:  JP      .bios_punch
-READER: JP      .bios_reader
+PUNCH:  JP      bios_punch
+READER: JP      bios_reader
 HOME:   JP      disk_home
 SELDSK: JP      disk_seldsk
 SETTRK: JP      disk_settrk
@@ -121,24 +129,43 @@ SECTRN: JP      disk_sectrn
 ;
 ;##########################################################################
 
-.bios_boot:
+bios_boot:
 	; This will select low-bank E, idle the SD card, and idle the printer
-	ld	a,gpio_out_init
-	ld	(gpio_out_cache),a
-	out	(gpio_out),a
+;	ld	a,gpio_out_init
+;	ld	(gpio_out_cache),a
+;	out	(gpio_out),a
+
+	di
+	ld a,$7b	; disable wdt
+	out ($f0),a
+	ld a,$b1
+	out ($f1),a
+	ld a,01
+	out (memmap),a	; make sure block 0 is RAM. Rest should be RAM after reset but prolly should reset too
 
 	; make sure we have a viable stack
 	ld	sp,bios_stack		; use the private BIOS stack to get started
 
-	call	con_init                ; Note: console should still be initialized from the boot loader
-	call	list_init		; initialize the printer interface
+;	call memmap_init
+	ld a,$20
+	call delay		; looks like Z80 needs this delay to successfully write to IO ports
+	ld a,$01		; (SYSCLK MHz/2/(value+1))
+	out (turbo),a
+	call ymzinit
+	call chime
+	call PIO_INIT		; init PIO
+	call CTC_INIT_ALL     ; init CTC
+	call SIO_INIT         ; init SIO, CTC drives SIO, so has to be set first
 
-if .debug > 0
+;	call	con_init                ; Note: console should still be initialized from the boot loader
+;	call	list_init		; initialize the printer interface
+
+if debug > 0
 	call	iputs
-	db	"\r\n.bios_boot entered\r\n\0"
+	db	"\r\nbios_boot entered\r\n\0"
 	call	iputs
 	db	"NOTICE: Debug level is set to: 0x\0"
-	ld	a,.debug		; A = the current debug level
+	ld	a,debug		; A = the current debug level
 	call	hexdump_a		; print the current level number
 	call	puts_crlf		; and a newline
 endif
@@ -162,13 +189,13 @@ endif
 
 
 .boot_msg:
-	defb	'\r\n\n'
-	defb	'Z80 Retro BIOS Copyright (C) 2021 John Winans\r\n'
-	defb	'CP/M 2.2 Copyright (C) 1979 Digital Research\r\n'
-	defb	'  git: @@GIT_VERSION@@\r\n'
-	defb	'build: @@DATE@@\r\n'
-	defb	'\n'
-	defb	'\0'
+	defb	"\r\n\n"
+	defb	"Z80 Retro BIOS Copyright (C) 2021 John Winans\r\n"
+	defb	"CP/M 2.2 Copyright (C) 1979 Digital Research\r\n"
+	defb	"  git: @@GIT_VERSION@@\r\n"
+	defb	"build: @@DATE@@\r\n"
+	defb	"\n"
+	defb	"\0"
 
 
 ;##########################################################################
@@ -192,21 +219,21 @@ endif
 
 ; WARNING: The following assumes that CPM_BASE%128 is zero!
 
-.wb_nsects:	equ (BOOT-CPM_BASE)/128			; number of sectors to load
-.wb_trk:	equ (CPM_BASE-LOAD_BASE)/512		; first track number (rounded down)
-.wb_sec:	equ ((CPM_BASE-LOAD_BASE)/128)&0x03	; first sector number
+wb_nsects:	equ (BOOT-CPM_BASE)/128			; number of sectors to load
+wb_trk:	equ (CPM_BASE-LOAD_BASE)/512		; first track number (rounded down)
+wb_sec:	equ ((CPM_BASE-LOAD_BASE)/128)&0x03	; first sector number
 
 
-.bios_wboot:
+bios_wboot:
 
 	; We can't just blindly set SP=bios_stack here because disk_read can overwrite it!
 	; But we CAN set to use other areas that we KNOW are not currently in use!
-	ld	sp,.bios_wboot_stack			; the disk_dirbuf is garbage right now
+	ld	sp,bios_wboot_stack			; the disk_dirbuf is garbage right now
 
 
-if .debug >= 2
+if debug >= 2
 	call	iputs
-	db	"\r\n.bios_wboot entered\r\n\0"
+	db	"\r\nbios_wboot entered\r\n\0"
 endif
 
 	; reload the CCP and BDOS
@@ -214,16 +241,16 @@ endif
 	ld	c,0			; C = drive number (0=A)
 	call	disk_seldsk		; load the OS from drive A
 
-	ld	bc,.wb_trk		; BC = track number whgere the CCP starts
+	ld	bc,wb_trk		; BC = track number whgere the CCP starts
 	call	disk_settrk
 
-	ld	bc,.wb_sec		; sector where the CCP begins on .wb_trk
+	ld	bc,wb_sec		; sector where the CCP begins on wb_trk
 	call	disk_setsec
 
 	ld	bc,CPM_BASE		; starting address to read the OS into
 	call	disk_setdma
 
-	ld	bc,.wb_nsects		; BC = gross number of sectors to read
+	ld	bc,wb_nsects		; BC = gross number of sectors to read
 .wboot_loop:
 	push	bc			; save the remaining sector count
 
@@ -287,7 +314,7 @@ endif
 	ld	bc,0x80		; this is here because it is in the example CBIOS (AG p.52)
 	call	disk_setdma
 
-if .debug >= 3
+if debug >= 3
 	; dump the zero-page for reference
 	ld	hl,0		; start address
 	ld	bc,0x100	; number of bytes
@@ -317,8 +344,8 @@ endif
 ; Else return 00H in register A.
 ;
 ;##########################################################################
-.bios_const:
-	call	con_rx_ready
+bios_const:
+	call	SIOA_RX_CHK	; SIOA_RX_CHK returns 1 if data present, 0 if not
 	ret	z		; A = 0 = not ready
 	ld	a,0xff
 	ret			; A = 0xff = ready
@@ -333,7 +360,7 @@ endif
 ; The Z80 Retro! has no punch device. Discard any data written.
 ;
 ;##########################################################################
-.bios_punch:
+bios_punch:	call SIOB_TX
 	ret
 
 ;##########################################################################
@@ -346,7 +373,8 @@ endif
 ; The Z80 Retro! has no tape device. Return the EOF character.
 ;
 ;##########################################################################
-.bios_reader:
+bios_reader:
+;	SIOB_RX
 	ld	a,0x1a
 	ret
 
@@ -355,14 +383,14 @@ endif
 ; Libraries
 ;##########################################################################
 
-include 'disk_callgate.asm'
+;include "disk_callgate.asm"
 
-include 'console.asm'
-include 'list.asm'
-include 'puts.asm'
-include 'hexdump.asm'
-include 'sdcard.asm'
-include 'spi.asm'
+;include "../mintz80_monitor/CONIO_SIO.asm"
+;include "../mintz80_monitor/CTCDriver.asm"
+;include "../mintz80_monitor/PIODriver.asm"
+;include "../mintz80_monitor/SIODriver.asm"
+;include "../mintz80_monitor/ymzdrvr.asm"
+;include "../mintz80_monitor/CFDriver.asm"
 
 
 ;##########################################################################
@@ -373,8 +401,8 @@ gpio_out_cache: ds  1			; GPIO output latch cache
 
 
 disk_dirbuf:
-	ds	128		; scratch directory buffer
-.bios_wboot_stack:		; (ab)use the BDOS directory buffer as a stack during WBOOT
+	ds	512		; scratch directory buffer
+bios_wboot_stack:		; (ab)use the BDOS directory buffer as a stack during WBOOT
 
 
 ;##########################################################################
@@ -382,7 +410,7 @@ disk_dirbuf:
 ;
 ; WARNING: This is expected to be in memory that is NOT bank-switchable!
 ;##########################################################################
-.bios_stack_lo:
+bios_stack_lo:
 	ds	64,0x55		; 32 stack levels = 64 bytes (init to analyze)
 bios_stack:			; full descending stack starts /after/ the storage area 
 
@@ -393,3 +421,10 @@ if $ < BOOT
 endif
 
 	end
+
+endprog	equ $
+
+	output_bin "mintz80_CPM_22.bin",LOAD_BASE,endprog-LOAD_BASE	; 
+	output_intel "mintz80_CPM_22.hex",LOAD_BASE,endprog-LOAD_BASE	; 
+	output_list "mintz80_CPM_22.lst"
+
